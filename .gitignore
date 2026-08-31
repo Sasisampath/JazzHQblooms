@@ -38,3 +38,5 @@ next-env.d.ts
 /work/
 
 /work-captures/
+
+*.tsbuildinfo
