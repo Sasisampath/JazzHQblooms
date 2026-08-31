@@ -92,8 +92,8 @@ export class BloomRenderer {
     for(const i of free){const p=pieces[i];let best=0,score=Infinity;for(let j=0;j<targets.length;j++){const t=targets[j];const d=(p.x-t.x)**2+(p.y-t.y)**2+(!p.blue&&t.finder?150000:0);if(d<score){score=d;best=j;}}assignments.set(i,best);}
     const attrs:number[]=[];pieces.forEach((p,i)=>{const t=targets[assignments.get(i)!],r=noise(p.group),vase=p.y>456;
       const tail=r>.72;
-      const start=t.finder?.005:vase?.045:tail?.22:.115+r*.035;
-      const end=t.finder?.265:vase?.31:tail?.70+r*.12:.32+r*.07;
+      const start=t.finder?.005:vase?.045:tail?.25:.205+r*.025;
+      const end=t.finder?.265:vase?.31:tail?.70+r*.12:.395+r*.04;
       attrs.push(p.x,p.y,p.w,p.h,t.x,t.y,t.w,t.h,start,end,noise(p.group+7)*2-1,noise(p.group+81)*2-1,...(t.finder?[38/255,60/255,128/255]:[101/255,29/255,61/255]));
     });
     this.count=pieces.length;gl.bindBuffer(gl.ARRAY_BUFFER,this.buffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(attrs),gl.STATIC_DRAW);this.draw(this.progress);
