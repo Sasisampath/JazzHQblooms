@@ -90,7 +90,7 @@ export class BloomRenderer {
     const targetOrder=targets.map((t,j)=>({t,j})).sort((a,b)=>Number(b.t.finder)-Number(a.t.finder));
     for(const {t,j} of targetOrder){let best=-1,score=Infinity;for(const i of free){const p=pieces[i];const d=(p.x-t.x)**2+(p.y-t.y)**2+(t.finder&&!p.blue?300000:0);if(d<score){score=d;best=i;}}assignments.set(best,j);free.delete(best);}
     for(const i of free){const p=pieces[i];let best=0,score=Infinity;for(let j=0;j<targets.length;j++){const t=targets[j];const d=(p.x-t.x)**2+(p.y-t.y)**2+(!p.blue&&t.finder?150000:0);if(d<score){score=d;best=j;}}assignments.set(i,best);}
-    const attrs:number[]=[];pieces.forEach((p,i)=>{const t=targets[assignments.get(i)!],r=noise(p.group),vase=p.y>456;
+    const attrs:number[]=[];pieces.forEach((p,i)=>{const t=targets[assignments.get(i)!],r=noise(p.group),vase=p.y>485;
       const tail=r>.72;
       const start=t.finder?.005:vase?.045:tail?.25:.205+r*.025;
       const end=t.finder?.265:vase?.31:tail?.70+r*.12:.395+r*.04;
