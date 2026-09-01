@@ -10,10 +10,10 @@ export function generateQRMatrix(url: string) {
   return {size: qr.modules.size, data: Array.from(qr.modules.data)};
 }
 export function isFinder(x: number, y: number, n: number) { return (x < 7 && y < 7) || (x >= n - 7 && y < 7) || (x < 7 && y >= n - 7); }
-export function drawQR(canvas: HTMLCanvasElement, url: string, width = 1024) {
+export function drawQR(canvas: HTMLCanvasElement, url: string, width = 1024, colors: {primary?: string; accent?: string} = {}) {
   const {size, data} = generateQRMatrix(url); const unit = Math.floor(width / (size + 8));
   canvas.width = canvas.height = unit * (size + 8); const ctx = canvas.getContext('2d')!;
   ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-  for (let y=0;y<size;y++) for(let x=0;x<size;x++) if(data[y*size+x]) { ctx.fillStyle = isFinder(x,y,size) ? '#263c80' : '#651d3d'; ctx.fillRect((x+4)*unit,(y+4)*unit,unit,unit); }
+  for (let y=0;y<size;y++) for(let x=0;x<size;x++) if(data[y*size+x]) { ctx.fillStyle = isFinder(x,y,size) ? colors.accent ?? '#263c80' : colors.primary ?? '#651d3d'; ctx.fillRect((x+4)*unit,(y+4)*unit,unit,unit); }
   return canvas;
 }

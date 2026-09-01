@@ -1,62 +1,216 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, RotateCcw, Download, Play, Pause, Check, Layers2, ScanLine } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Slider } from '@/components/ui/slider';
-import { Input } from '@/components/ui/input';
-import { BloomRenderer, DURATION } from '@/lib/bloom/renderer';
-import { DEFAULT_URL, drawQR, generateQRMatrix, validEventUrl } from '@/lib/bloom/qr';
+
+import { ArrowUpRight, Check, Copy, Eye, RotateCcw, Share2, Sparkles } from 'lucide-react';
 import jsQR from 'jsqr';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import BloomCanvas, { type RendererStats } from './BloomCanvas';
+import {
+  BOUQUETS,
+  DEFAULT_CONFIG,
+  PALETTES,
+  createRecipientUrl,
+  getBouquet,
+  getPalette,
+  readBloomConfig,
+  type BloomConfig,
+  type BouquetId,
+} from '@/lib/bloom/config';
+import { drawQR, generateQRMatrix, validEventUrl } from '@/lib/bloom/qr';
+
+const MORPH_DURATION = 860;
+const EMPTY_STATS: RendererStats = { renderer: 'WebGL / Three.js', sceneObjects: 0, flowerInstances: 0, flowerHeads: 0, qrInstances: 0, fps: 0 };
+
+function BouquetGlyph({ id, color }: { id: BouquetId; color: string }) {
+  if (id === 'rose') return <svg viewBox="0 0 48 38" aria-hidden="true"><path d="M24 6c8 0 14 5 14 12 0 10-10 16-14 16S10 28 10 18C10 11 16 6 24 6Z" fill={color} opacity=".24"/><path d="M24 10c6 0 10 4 10 9 0 7-7 11-10 11s-10-4-10-11c0-5 4-9 10-9Z" fill="none" stroke={color} strokeWidth="3"/><path d="M18 20c2-7 12-7 12 0 0 5-8 6-8 1 0-3 4-3 5-1" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round"/></svg>;
+  if (id === 'lily') return <svg viewBox="0 0 48 38" aria-hidden="true"><g fill={color} opacity=".78" transform="translate(24 20)">{Array.from({ length: 6 }, (_, i) => <ellipse key={i} cx="0" cy="-10" rx="4" ry="11" transform={`rotate(${i * 60})`}/>)}</g><circle cx="24" cy="20" r="3" fill="#e5ad35"/></svg>;
+  if (id === 'tulip') return <svg viewBox="0 0 48 38" aria-hidden="true"><path d="M14 8c5 1 8 5 10 10 2-5 5-9 10-10 2 14-2 20-10 20S12 22 14 8Z" fill={color}/><path d="M24 27v9M16 36h16" stroke="#526f5b" strokeWidth="2"/></svg>;
+  if (id === 'mixed') return <svg viewBox="0 0 48 38" aria-hidden="true"><circle cx="17" cy="18" r="9" fill={color}/><g fill={color} opacity=".72" transform="translate(31 16)">{Array.from({ length: 5 }, (_, i) => <ellipse key={i} cy="-6" rx="3" ry="7" transform={`rotate(${i * 72})`}/>)}</g><path d="M12 31c8-8 17-6 25 0" fill="none" stroke="#526f5b" strokeWidth="3"/></svg>;
+  return <svg viewBox="0 0 48 38" aria-hidden="true"><g fill={color}>{[[24,18,9],[17,17,7],[31,17,7],[21,11,6],[27,11,6],[24,24,7]].map(([cx,cy,r], i)=><circle key={i} cx={cx} cy={cy} r={r} opacity={0.46 + i * 0.08}/>)}</g><circle cx="24" cy="18" r="5" fill={color}/></svg>;
+}
+
+function PerfectQR({ url, progress, primary, accent, qrRef }: { url: string; progress: number; primary: string; accent: string; qrRef: React.RefObject<HTMLCanvasElement | null> }) {
+  useEffect(() => {
+    if (qrRef.current) drawQR(qrRef.current, url, 1024, { primary, accent });
+  }, [accent, primary, qrRef, url]);
+  const opacity = Math.max(0, Math.min(1, (progress - 0.93) / 0.07));
+  return <canvas ref={qrRef} className="perfect-qr" style={{ opacity }} aria-label="Scannable QR code for this JAZZHQ Bloom" />;
+}
+
+function SceneStage({ config, progress, onToggle, onStats, qrRef, className = '' }: { config: BloomConfig; progress: number; onToggle: () => void; onStats: (stats: RendererStats) => void; qrRef: React.RefObject<HTMLCanvasElement | null>; className?: string }) {
+  const palette = getPalette(config.palette);
+  return (
+    <div className={`bloom-stage ${className}`}>
+      <BloomCanvas bouquet={config.bouquet} palette={palette} destinationUrl={config.destinationUrl} progress={progress} interactive onToggle={onToggle} onStats={onStats} />
+      <PerfectQR url={config.destinationUrl} progress={progress} primary={palette.qrPrimary} accent={palette.qrAccent} qrRef={qrRef} />
+    </div>
+  );
+}
+
+function DebugPanel({ config, progress, playing, stats, validation, onProgress, onAnimate, onBouquet, onValidate }: { config: BloomConfig; progress: number; playing: boolean; stats: RendererStats; validation: string; onProgress: (value: number) => void; onAnimate: (target: number) => void; onBouquet: (id: BouquetId) => void; onValidate: () => void }) {
+  const matrix = generateQRMatrix(config.destinationUrl);
+  return (
+    <section className="three-debug" aria-label="Three.js development controls">
+      <div className="debug-readout">
+        <span><b>Renderer</b>{stats.renderer}</span><span><b>Scene objects</b>{stats.sceneObjects}</span><span><b>Bouquet</b>{getBouquet(config.bouquet).name}</span><span><b>Flower instances</b>{stats.flowerInstances}</span><span><b>QR instances</b>{stats.qrInstances}</span><span><b>FPS</b>{stats.fps || '—'}</span>
+      </div>
+      <label className="morph-range"><span>Morph</span><input type="range" min="0" max="100" value={Math.round(progress * 100)} onChange={(event) => onProgress(Number(event.target.value) / 100)} /><output>{Math.round(progress * 100)}%</output></label>
+      <div className="debug-buttons"><button onClick={() => onProgress(0)}>Bouquet</button><button onClick={() => onProgress(0.25)}>25%</button><button onClick={() => onProgress(0.5)}>50%</button><button onClick={() => onProgress(0.75)}>75%</button><button onClick={() => onProgress(1)}>QR</button><button onClick={() => onAnimate(progress > 0.5 ? 0 : 1)}>{playing ? 'Playing…' : 'Reverse'}</button></div>
+      <div className="debug-buttons bouquet-debug">{BOUQUETS.map((bouquet) => <button key={bouquet.id} className={config.bouquet === bouquet.id ? 'active' : ''} onClick={() => onBouquet(bouquet.id)}>{bouquet.name}</button>)}</div>
+      <div className="debug-validation"><span>{matrix.size} × {matrix.size} matrix</span><button onClick={onValidate}>Validate final QR</button></div>
+      {validation && <p className={validation.startsWith('Decoded') ? 'success' : 'error'}>{validation}</p>}
+    </section>
+  );
+}
 
 export default function BloomExperience() {
- const canvas=useRef<HTMLCanvasElement>(null),engine=useRef<BloomRenderer|null>(null),frame=useRef(0),current=useRef(0),clock=useRef(0);
- const [progress,setProgress]=useState(0),[ready,setReady]=useState(false),[playing,setPlaying]=useState(false),[debug,setDebug]=useState(false),[overlay,setOverlay]=useState(false),[opacity,setOpacity]=useState(40),[compare,setCompare]=useState(true),[slow,setSlow]=useState(false),[url,setUrl]=useState(DEFAULT_URL),[input,setInput]=useState(DEFAULT_URL),[error,setError]=useState(''),[validation,setValidation]=useState(''),[fragments,setFragments]=useState(0),[reduced,setReduced]=useState(false),[gpuError,setGpuError]=useState('');
- const complete=progress>=.999;
- const qrSize=generateQRMatrix(url).size;
- useEffect(()=>{const q=new URLSearchParams(window.location.search);setDebug(q.get('debug')==='true'||q.get('reference')==='true');setOverlay(q.get('reference')==='true');const initial=q.get('url');if(initial&&validEventUrl(initial)){setUrl(initial);setInput(initial);}const m=window.matchMedia('(prefers-reduced-motion: reduce)');const change=()=>setReduced(m.matches);change();m.addEventListener('change',change);return()=>m.removeEventListener('change',change);},[]);
- useEffect(()=>{setReady(false);let disposed=false;const image=new Image();image.onload=()=>{if(disposed||!canvas.current)return;try{engine.current=new BloomRenderer(canvas.current,image,url);engine.current.draw(current.current);setFragments(engine.current.fragmentCount);setReady(true);}catch(e){setGpuError(e instanceof Error?e.message:'The animation could not load.');setReady(true);}};image.onerror=()=>{setGpuError('The bouquet could not load. You can still reveal the QR.');setReady(true);};image.src='/reference/bouquet.jpg';return()=>{disposed=true;cancelAnimationFrame(frame.current);engine.current?.dispose();engine.current=null;};},[url]);
- const draw=(p:number)=>{current.current=p;engine.current?.draw(p);setProgress(p);};
- const seek=(p:number)=>{cancelAnimationFrame(frame.current);setPlaying(false);draw(p);setValidation('');};
- const animate=(target:number)=>{cancelAnimationFrame(frame.current);setValidation('');if(reduced||gpuError){seek(target);return;}const from=current.current;clock.current=performance.now();setPlaying(true);const duration=DURATION*(slow?4:1)*Math.abs(target-from);const tick=(time:number)=>{const t=duration?Math.min(1,(time-clock.current)/duration):1;draw(from+(target-from)*t);if(t<1)frame.current=requestAnimationFrame(tick);else setPlaying(false);};frame.current=requestAnimationFrame(tick);};
- const setEvent=()=>{const next=validEventUrl(input.trim());if(!next){setError('Use a complete http or https URL, up to 700 characters.');return;}setError('');seek(0);setUrl(next);const loc=new URL(window.location.href);loc.searchParams.set('url',next);window.history.replaceState({},'',loc);};
- const download=()=>{const c=drawQR(document.createElement('canvas'),url);const a=document.createElement('a');a.href=c.toDataURL('image/png');a.download='bloom-invite-qr.png';a.click();};
- const validate=()=>{seek(1);requestAnimationFrame(()=>{const out=document.createElement('canvas');if(gpuError){drawQR(out,url);}else{out.width=canvas.current!.width;out.height=canvas.current!.height;out.getContext('2d')!.drawImage(canvas.current!,0,0);}const image=out.getContext('2d')!.getImageData(0,0,out.width,out.height);const result=jsQR(image.data,image.width,image.height);setValidation(result?.data===url?`Decoded from the rendered QR: ${result.data}`:'The rendered QR did not decode. Try the downloaded QR or Open event.');});};
- const refIndex=Math.max(1,Math.min(11,Math.round(progress*10)+1));
- const refSrc=progress===0?'/reference/bouquet.jpg':`/reference/key-${String(refIndex).padStart(2,'0')}.jpg`;
- const phase=progress===0?'Bouquet':progress<.2?'First movement':progress<.4?'Floral breakup':progress<.62?'Finder emergence':progress<.88?'Grid lock':'Settled QR';
- return <main className={`experience ${debug?'study':''}`}>
-  {debug&&<div className="study-heading"><span>JAZZHQ Bloom</span><span>Reference recreation · motion study</span></div>}
-  <div className="personal"><span>For Monu</span><small>from Sasi</small></div>
-  <div className={`stages ${debug&&compare?'comparison':''}`}>
-   <div className="stage-wrap">
-    {debug&&<div className="stage-caption"><span>Implementation</span><span>{phase}</span></div>}
-    <div className="stage">
-     {!ready&&<img className="loading-bouquet" src="/reference/bouquet.jpg" alt="Your magenta bouquet"/>}
-     {gpuError&&<img src={complete?undefined:'/reference/bouquet.jpg'} className={complete?'hidden':''} alt="Your magenta bouquet"/>}
-     <canvas ref={canvas} className={gpuError?'hidden':''} aria-label={complete?'Scannable QR code for your event':'Magenta bouquet transforming into an event QR'} role="img"/>
-     {gpuError&&complete&&<FallbackQR url={url}/>}
-     {overlay&&<img className="reference-overlay" src={refSrc} style={{opacity:opacity/100}} alt="Reference frame overlay"/>}
-     <button className="stage-hit" aria-label={complete?'Gather the bouquet':ready?'Transform bouquet into QR':'Loading bouquet'} disabled={!ready||playing} onClick={()=>animate(complete?0:1)}/>
-    </div>
-   </div>
-   {debug&&compare&&<div className="stage-wrap reference-view"><div className="stage-caption"><span>Supplied reference</span><span>{progress===0?'First frame':`${(1.05+progress*.55).toFixed(2)} s`}</span></div><div className="stage"><img src={refSrc} alt={`Reference at ${Math.round(progress*100)} percent of the first reveal`}/></div></div>}
-  </div>
-  <div className="experience-actions" aria-live="polite">
-   {!complete?<Button variant="ghost" className="tap" onClick={()=>animate(1)} disabled={!ready||playing}>{playing?'Opening your bloom…':'Tap your bloom'}{!playing&&<ArrowUpRight size={14}/>}</Button>:<><div className="event-name">{url===DEFAULT_URL?'Unwind — Chennai':'Your invitation'}</div><p className="scan-hint">Scan to open the invitation</p><a className="open-event" href={url} target="_blank" rel="noopener noreferrer">Open event <ArrowUpRight size={14}/></a><div className="secondary-actions"><Button variant="ghost" onClick={()=>animate(0)} className="quiet"><RotateCcw size={13}/>Replay bloom</Button><Button variant="ghost" onClick={download} className="quiet"><Download size={13}/>Save QR</Button></div></>}
-   {gpuError&&<p className="error" role="status">{gpuError}</p>}
-   {reduced&&<p className="subtle">Reduced motion is on. Your bloom reveals instantly.</p>}
-  </div>
-  {debug&&<section className="debug-panel" aria-label="Animation development controls">
-   <div className="progress-heading"><label id="morph-label">Morph Progress</label><output>{Math.round(progress*100)}%</output></div>
-   <Slider aria-labelledby="morph-label" value={[Math.round(progress*100)]} min={0} max={100} step={1} onValueChange={v=>seek((Array.isArray(v)?v[0]:v)/100)}/>
-   <div className="keyframes">{Array.from({length:11},(_,i)=><Button variant="ghost" aria-pressed={Math.round(progress*10)===i} className={Math.round(progress*10)===i?'selected':''} key={i} onClick={()=>seek(i/10)}>{i*10}%</Button>)}</div>
-   <div className="control-row"><Button variant="outline" onClick={()=>playing?seek(current.current):animate(complete?0:1)}>{playing?<Pause/>:<Play/>}{playing?'Pause':complete?'Reverse':'Play'}</Button><Button variant="ghost" onClick={()=>seek(0)}><RotateCcw/>Reset</Button><label className="toggle"><input type="checkbox" checked={slow} onChange={e=>setSlow(e.target.checked)}/>¼ speed</label><label className="toggle"><input type="checkbox" checked={compare} onChange={e=>setCompare(e.target.checked)}/>Side by side</label><Button variant={overlay?'secondary':'ghost'} onClick={()=>setOverlay(!overlay)} aria-pressed={overlay}><Layers2/>Overlay</Button></div>
-   {overlay&&<div className="overlay-control"><label id="opacity-label">Reference opacity <output>{opacity}%</output></label><Slider aria-labelledby="opacity-label" value={[opacity]} min={0} max={100} step={1} onValueChange={v=>setOpacity(Array.isArray(v)?v[0]:v)}/></div>}
-   <div className="event-control"><label htmlFor="event-url">QR destination</label><div><Input id="event-url" type="url" value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')setEvent();}}/><Button variant="outline" onClick={setEvent}>Apply</Button></div>{error&&<p className="error" role="alert">{error}</p>}</div>
-   <div className="validation-row"><span>{fragments.toLocaleString()} fragments · {qrSize} × {qrSize} QR · 550 ms</span><Button variant="ghost" onClick={validate}><ScanLine/>Validate QR</Button></div>
-   {validation&&<p className="validation" role="status"><Check size={14}/>{validation}</p>}
-   <details className="implementation-notes"><summary>Reference measurements & limitations</summary><p>First reveal: initial hold 0–1.05 s; vase/grid movement 1.05–1.15 s; flower breakup 1.15–1.25 s; finder recognition 1.25–1.35 s; final lock approximately 1.55–1.60 s. The player maps 0–100% to 1.05–1.60 s. The 0% overlay uses the exact opening frame.</p><p>The bouquet uses thousands of independently animated texture fragments extracted from the supplied video, including its vase, foliage and shadow. It is not a 3D reconstruction. Source flower sway, petal rotation in depth and exact occlusion cannot be recovered from one camera view; this implementation uses deterministic clustered paths with a rising, flattening QR plane. The midpoint is an approximation, not a pixel-exact recreation. QR geometry changes with the destination. A full QR image is never faded over the bouquet.</p><p>The attached polygonal flower images are alternate species references; they are not substituted into the video’s magenta bouquet. Creator, style variants and sharing are deferred while this recreation is reviewed. No code from the ZIP is redistributed.</p></details>
-  </section>}
- </main>;
+  const [config, setConfig] = useState<BloomConfig>(DEFAULT_CONFIG);
+  const [view, setView] = useState<'creator' | 'recipient'>('creator');
+  const [progress, setProgress] = useState(0);
+  const progressRef = useRef(0);
+  const frame = useRef(0);
+  const qrRef = useRef<HTMLCanvasElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [debug, setDebug] = useState(false);
+  const [reducedMotion, setReducedMotion] = useState(false);
+  const [stats, setStats] = useState<RendererStats>(EMPTY_STATS);
+  const [urlError, setUrlError] = useState('');
+  const [createdLink, setCreatedLink] = useState('');
+  const [copyState, setCopyState] = useState('');
+  const [validation, setValidation] = useState('');
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const updateMotion = () => setReducedMotion(media.matches);
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      setConfig(readBloomConfig(params));
+      setView(params.get('view') === 'recipient' ? 'recipient' : 'creator');
+      setDebug(params.get('debug') === 'true');
+      updateMotion();
+    });
+    media.addEventListener('change', updateMotion);
+    return () => { active = false; media.removeEventListener('change', updateMotion); };
+  }, []);
+
+  useEffect(() => () => cancelAnimationFrame(frame.current), []);
+
+  const setMorph = useCallback((value: number) => {
+    cancelAnimationFrame(frame.current);
+    setPlaying(false);
+    progressRef.current = value;
+    setProgress(value);
+    setValidation('');
+  }, []);
+
+  const animateTo = (target: number) => {
+    cancelAnimationFrame(frame.current);
+    if (reducedMotion) { setMorph(target); return; }
+    const from = progressRef.current;
+    const start = performance.now();
+    const duration = Math.max(180, MORPH_DURATION * Math.abs(target - from));
+    setPlaying(true);
+    const tick = (now: number) => {
+      const linear = Math.min(1, (now - start) / duration);
+      const eased = linear < 0.5 ? 4 * linear * linear * linear : 1 - Math.pow(-2 * linear + 2, 3) / 2;
+      const value = from + (target - from) * eased;
+      progressRef.current = value;
+      setProgress(value);
+      if (linear < 1) frame.current = requestAnimationFrame(tick);
+      else setPlaying(false);
+    };
+    frame.current = requestAnimationFrame(tick);
+  };
+
+  const toggleMorph = () => {
+    if (!playing) animateTo(progressRef.current > 0.5 ? 0 : 1);
+  };
+
+  const handleStats = useCallback((next: RendererStats) => setStats(next), []);
+
+  const updateConfig = <K extends keyof BloomConfig>(key: K, value: BloomConfig[K]) => {
+    setConfig((current) => ({ ...current, [key]: value }));
+    setCreatedLink('');
+    setCopyState('');
+    if (key === 'bouquet' || key === 'palette') setMorph(0);
+  };
+
+  const createBloom = () => {
+    const normalized = validEventUrl(config.destinationUrl.trim());
+    if (!normalized) { setUrlError('Enter a complete http or https URL.'); return; }
+    const completeConfig = { ...config, destinationUrl: normalized, to: config.to.trim() || 'Someone special', from: config.from.trim() || 'Someone' };
+    setConfig(completeConfig);
+    setUrlError('');
+    setCreatedLink(createRecipientUrl(completeConfig, window.location));
+  };
+
+  const copyLink = async () => {
+    if (!createdLink) return;
+    await navigator.clipboard.writeText(createdLink);
+    setCopyState('Copied');
+  };
+
+  const shareBloom = async () => {
+    if (!createdLink) return;
+    const text = `A JAZZHQ Bloom from ${config.from || 'someone special'} 🌸`;
+    if (navigator.share) await navigator.share({ title: `A JAZZHQ Bloom for ${config.to}`, text, url: createdLink });
+    else await copyLink();
+  };
+
+  const validateQR = () => {
+    setMorph(1);
+    requestAnimationFrame(() => {
+      const canvas = qrRef.current;
+      if (!canvas) return;
+      const context = canvas.getContext('2d');
+      if (!context) return;
+      const image = context.getImageData(0, 0, canvas.width, canvas.height);
+      const decoded = jsQR(image.data, image.width, image.height);
+      setValidation(decoded?.data === config.destinationUrl ? `Decoded successfully: ${decoded.data}` : 'The final QR did not decode.');
+    });
+  };
+
+  const palette = useMemo(() => getPalette(config.palette), [config.palette]);
+  const complete = progress >= 0.995;
+
+  return (
+    <main className={view === 'recipient' ? 'recipient-page' : 'creator-page'}>
+      {view === 'creator' ? (
+        <>
+          <header className="creator-header"><div><strong>JAZZHQ Bloom</strong><span>Turn any link into a bloom</span></div><span className="renderer-chip">Three.js · interactive</span></header>
+          <div className="creator-shell">
+            <aside className="creator-panel">
+              <div className="panel-heading"><span>01 / Create</span><h1>Create your<br />JAZZHQ Bloom</h1><p>Shape a living bouquet around any link, then send it to someone special.</p></div>
+              <div className="form-grid">
+                <label className="field field-wide"><span>Destination URL</span><input type="url" value={config.destinationUrl} onChange={(event) => updateConfig('destinationUrl', event.target.value)} placeholder="https://example.com" />{urlError && <small className="error">{urlError}</small>}</label>
+                <label className="field"><span>To</span><input value={config.to} maxLength={60} onChange={(event) => updateConfig('to', event.target.value)} /></label>
+                <label className="field"><span>From</span><input value={config.from} maxLength={60} onChange={(event) => updateConfig('from', event.target.value)} /></label>
+                <label className="field field-wide"><span>Message <em>optional</em></span><input value={config.message} maxLength={140} onChange={(event) => updateConfig('message', event.target.value)} placeholder="See you there" /></label>
+              </div>
+              <fieldset className="picker"><legend>Bouquet</legend><div className="bouquet-options">{BOUQUETS.map((bouquet) => <button type="button" key={bouquet.id} className={config.bouquet === bouquet.id ? 'selected' : ''} onClick={() => updateConfig('bouquet', bouquet.id)} aria-pressed={config.bouquet === bouquet.id}><span className="bouquet-thumb"><BouquetGlyph id={bouquet.id} color={palette.flowerPrimary} /></span><span>{bouquet.name}</span></button>)}</div></fieldset>
+              <fieldset className="picker"><legend>Color</legend><div className="palette-options">{PALETTES.map((option) => <button type="button" key={option.id} className={config.palette === option.id ? 'selected' : ''} onClick={() => updateConfig('palette', option.id)} aria-label={option.name} aria-pressed={config.palette === option.id}><span style={{ background: `linear-gradient(135deg, ${option.flowerSecondary} 0 48%, ${option.flowerPrimary} 49% 72%, ${option.flowerAccent} 73%)` }} /><small>{option.name}</small></button>)}</div></fieldset>
+              <button className="primary-create" onClick={createBloom}><Sparkles size={16} />Create JAZZHQ Bloom</button>
+              {createdLink && <div className="ready-card"><div><Check size={15} /><span>Your JAZZHQ Bloom is ready</span></div><p>{createdLink}</p><div><button onClick={copyLink}><Copy size={14} />{copyState || 'Copy link'}</button><button onClick={shareBloom}><Share2 size={14} />Share</button><button onClick={() => window.open(createdLink, '_blank', 'noopener,noreferrer')}><Eye size={14} />Preview</button></div></div>}
+            </aside>
+            <section className="creator-preview" aria-label="Live Three.js bouquet preview">
+              <div className="preview-meta"><div><span>Live bouquet</span><strong>{getBouquet(config.bouquet).name} · {palette.name}</strong></div><span>Drag to rotate</span></div>
+              <SceneStage config={config} progress={progress} onToggle={toggleMorph} onStats={handleStats} qrRef={qrRef} className="creator-scene" />
+              <div className="preview-controls"><button className={complete ? 'active' : ''} onClick={() => animateTo(complete ? 0 : 1)}>{complete ? <><RotateCcw size={14}/>Gather bouquet</> : <>Preview QR<ArrowUpRight size={14}/></>}</button><span>↔ Drag to explore in 3D</span></div>
+            </section>
+          </div>
+        </>
+      ) : (
+        <section className="recipient-experience">
+          <div className="recipient-brand">JAZZHQ Bloom</div>
+          <div className="recipient-personal"><span>For {config.to}</span><small>from {config.from}</small>{config.message && <p>{config.message}</p>}</div>
+          <SceneStage config={config} progress={progress} onToggle={toggleMorph} onStats={handleStats} qrRef={qrRef} className="recipient-scene" />
+          <div className="recipient-actions" aria-live="polite">
+            {!complete ? <><span>↔ Drag to explore</span><button onClick={() => animateTo(1)} disabled={playing}>{playing ? 'Opening your bloom…' : 'Tap to reveal'}<ArrowUpRight size={14}/></button></> : <><strong>{config.to}&apos;s bloom</strong><span>Scan or tap to open</span><a href={config.destinationUrl} target="_blank" rel="noopener noreferrer">Open link <ArrowUpRight size={14}/></a><button className="gather" onClick={() => animateTo(0)}><RotateCcw size={13}/>Gather bouquet</button></>}
+          </div>
+        </section>
+      )}
+      {debug && <DebugPanel config={config} progress={progress} playing={playing} stats={stats} validation={validation} onProgress={setMorph} onAnimate={animateTo} onBouquet={(id) => updateConfig('bouquet', id)} onValidate={validateQR} />}
+    </main>
+  );
 }
-function FallbackQR({url}:{url:string}) {const ref=useRef<HTMLCanvasElement>(null);useEffect(()=>{if(ref.current)drawQR(ref.current,url);},[url]);return <canvas className="fallback-qr" ref={ref} role="img" aria-label="Scannable event QR code"/>;}
