@@ -1,4 +1,4 @@
-# Bloom Invite — reference recreation
+# JAZZHQ Bloom — reference recreation
 
 A focused, mobile-first bouquet → real QR experiment. No invitation card, creator dashboard, or alternate bouquet is inserted into the sequence.
 

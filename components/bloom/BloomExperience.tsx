@@ -25,7 +25,7 @@ export default function BloomExperience() {
  const refSrc=progress===0?'/reference/bouquet.jpg':`/reference/key-${String(refIndex).padStart(2,'0')}.jpg`;
  const phase=progress===0?'Bouquet':progress<.2?'First movement':progress<.4?'Floral breakup':progress<.62?'Finder emergence':progress<.88?'Grid lock':'Settled QR';
  return <main className={`experience ${debug?'study':''}`}>
-  {debug&&<div className="study-heading"><span>Bloom Invite</span><span>Reference recreation · motion study</span></div>}
+  {debug&&<div className="study-heading"><span>JAZZHQ Bloom</span><span>Reference recreation · motion study</span></div>}
   <div className="personal"><span>For Monu</span><small>from Sasi</small></div>
   <div className={`stages ${debug&&compare?'comparison':''}`}>
    <div className="stage-wrap">
